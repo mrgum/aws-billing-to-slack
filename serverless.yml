@@ -28,7 +28,7 @@ functions:
 
     # Keep costs minimal
     memorySize: 128
-    timeout: 10
+    timeout: 20
 
     events:
       # Every day at 10:00 UTC
