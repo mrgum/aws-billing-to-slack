@@ -210,7 +210,7 @@ def report_cost(context, event):
     while True:
         for account in response['Accounts']:
             if searchterm is None or searchterm in account['Name'].lower():
-                print('{Id} {Name}'.format(**account))
+                #print('{Id} {Name}'.format(**account))
                 accounts.append(account['Id'])
                 total, this_buffer = cost_report(
                     account_id=[account['Id']],
