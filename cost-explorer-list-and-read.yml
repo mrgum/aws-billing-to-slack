@@ -1,0 +1,28 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "VisualEditor0",
+            "Effect": "Allow",
+            "Action": [
+                "ce:DescribeCostCategoryDefinition",
+                "ce:GetRightsizingRecommendation",
+                "ce:GetCostAndUsage",
+                "ce:GetSavingsPlansUtilization",
+                "ce:GetReservationPurchaseRecommendation",
+                "ce:ListCostCategoryDefinitions",
+                "ce:GetCostForecast",
+                "ce:GetReservationUtilization",
+                "ce:GetSavingsPlansPurchaseRecommendation",
+                "ce:GetDimensionValues",
+                "ce:GetSavingsPlansUtilizationDetails",
+                "ce:GetCostAndUsageWithResources",
+                "ce:GetReservationCoverage",
+                "ce:GetSavingsPlansCoverage",
+                "ce:GetTags",
+                "ce:GetUsageForecast"
+            ],
+            "Resource": "*"
+        }
+    ]
+}

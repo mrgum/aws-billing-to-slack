@@ -4,6 +4,8 @@
 
 Sends daily breakdowns of AWS costs to a Slack channel.
 
+This version is written to run under Organizations and requires a role in the master/root account
+
 # Install
 
 1. Install [`serverless`](https://serverless.com/), which I use to configure the AWS Lambda function that runs daily.
@@ -15,16 +17,20 @@ Sends daily breakdowns of AWS costs to a Slack channel.
 
 1. Create an [incoming webhook](https://www.slack.com/apps/new/A0F7XDUAZ) that will post to the channel of your choice on your Slack workspace. Grab the URL for use in the next step.
 
+1. Create IAM policies in the master/root account to allow listing accounts and reading cost explorer access.
+
+1. Create a IAM role in the master/root account with those roles and trust the account that you are running from to use it.
+
 1. Deploy the system into your AWS account, replacing the webhook URL below with the one you generated above.
 
     ```
-    serverless deploy --slack_url="https://hooks.slack.com/services/xxx/yyy/zzzz"
+    serverless deploy --aws_profile=profilename --aws_region=eu-west-1 --slack_url="https://hooks.slack.com/services/xxx/yyy/zzzz" --ca_account=123456789012 --ca_role=Billing-and-Costs --account_name_search_term=service
     ```
 
     You can also run it once to verify that it works:
 
     ```
-    serverless invoke --function report_cost --slack_url="https://hooks.slack.com/services/xxx/yyy/zzzz"
+    serverless invoke --function report_cost
     ```
 
 ## Support for AWS Credits
@@ -38,3 +44,9 @@ If you have AWS credits on your account and want to see them taken into account 
         --credits_remaining_date="mm/dd/yyyy" \
         --credits_remaining="xxx.xx"
     ```
+
+## TODO
+
+make this optional, not sure how to do that as the serverless.yml will need to change depending on what mode it runs in.
+
+describe-organization can list the id of the master account of the invoking account but that might not be the one we want
