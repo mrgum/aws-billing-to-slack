@@ -5,9 +5,11 @@ import os
 import requests
 import sys
 
-acct = os.environ.get('CA_ACCOUNT')
 role = os.environ.get('CA_ROLE')
-searchterm = os.environ.get('ACCOUNT_NAME_SEARCH_TERM')
+
+searchterm = None
+if 'ACCOUNT_NAME_SEARCH_TERM' in os.environ:
+    searchterm = os.environ.get('ACCOUNT_NAME_SEARCH_TERM')
 
 pagesize = 5
 
@@ -17,6 +19,15 @@ week_ago = today - datetime.timedelta(days=n_days)
 
 # Leaving out the full block because Slack doesn't like it: '█'
 sparks = ['▁', '▂', '▃', '▄', '▅', '▆', '▇']
+
+
+def get_root_account():
+    """
+    find the root account for the organization we are in
+    do not assume a role first
+    """
+    org = boto3.client('organizations').describe_organization()
+    return org['Organization']['MasterAccountId']
 
 
 def sparkline(datapoints):
@@ -35,7 +46,10 @@ def sparkline(datapoints):
 
 
 def delta(costs):
-    return ' (%+6.2f' % (((costs[-1] - costs[-2])/costs[-2]) * 100.0) + '%)'
+    if len(costs) < 2 or costs[-2] == 0:
+        return ' ({:6s}%)'.format("--")
+    else:
+        return ' (%+6.2f' % (((costs[-1] - costs[-2])/costs[-2]) * 100.0) + '%)'
 
 
 def cost_report(account_id, account_name,
@@ -168,6 +182,11 @@ def code_block(text):
 
 def report_cost(context, event):
 
+    if 'CA_ACCOUNT' in os.environ:
+        acct = os.environ.get('CA_ACCOUNT')
+    else:
+        acct = get_root_account()
+
     sts_connection = boto3.client('sts')
     acct_b = sts_connection.assume_role(
         RoleArn="arn:aws:iam::{}:role/{}".format(acct, role),
@@ -190,8 +209,8 @@ def report_cost(context, event):
     accounts = []
     while True:
         for account in response['Accounts']:
-            if searchterm in account['Name'].lower():
-                # print('{Id} {Name}'.format(**account))
+            if searchterm is None or searchterm in account['Name'].lower():
+                print('{Id} {Name}'.format(**account))
                 accounts.append(account['Id'])
                 total, this_buffer = cost_report(
                     account_id=[account['Id']],
