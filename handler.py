@@ -1,9 +1,14 @@
 from collections import defaultdict
 import boto3
 import datetime
+import json
 import os
 import requests
 import sys
+from urllib.parse import urlsplit
+from collections import OrderedDict
+import io
+import pprint
 
 role = os.environ.get('CA_ROLE')
 
@@ -14,11 +19,9 @@ if 'ACCOUNT_NAME_SEARCH_TERM' in os.environ:
 pagesize = 5
 
 n_days = 7
+top_n_services = 6
 today = datetime.datetime.today()
 week_ago = today - datetime.timedelta(days=n_days)
-
-# Leaving out the full block because Slack doesn't like it: '█'
-sparks = ['▁', '▂', '▃', '▄', '▅', '▆', '▇']
 
 
 def get_root_account():
@@ -30,7 +33,20 @@ def get_root_account():
     return org['Organization']['MasterAccountId']
 
 
-def sparkline(datapoints):
+def hook_service(hook_url) -> str:
+    hook_host = urlsplit(hook_url).hostname
+    if hook_host == 'hooks.slack.com':
+        return "slack"
+    elif hook_host == 'outlook.office.com':
+        return "teams"
+    else:
+        return "text"
+
+    # Leaving out the full block because Slack doesn't like it: '█'
+sparks = ['▁', '▂', '▃', '▄', '▅', '▆', '▇']
+
+
+def sparkline(datapoints) -> str:
     lower = min(datapoints)
     upper = max(datapoints)
     width = upper - lower
@@ -44,6 +60,21 @@ def sparkline(datapoints):
 
     return line
 
+# import inspect
+
+# def dump_args(func):
+#     """Decorator to print function call details - parameters names and effective values.
+#     """
+#     def wrapper(*args, **kwargs):
+#         func_args = inspect.signature(func).bind(*args, **kwargs).arguments
+#         func_args_str =  ', '.join('{} = {!r}'.format(*item) for item in func_args.items())
+#         print(f'{func.__module__}.{func.__qualname__} ( {func_args_str} )')
+#         return func(*args, **kwargs)
+#     return wrapper
+
+# compare the last and last but one cost
+# @dump_args
+
 
 def delta(costs):
     if len(costs) < 2 or costs[-2] == 0:
@@ -52,18 +83,165 @@ def delta(costs):
         return ' (%+6.2f' % (((costs[-1] - costs[-2])/costs[-2]) * 100.0) + '%)'
 
 
-def cost_report(account_id, account_name,
-                credentials):
+def ddf(cost):
+    return '${:.2f}'.format(cost)
 
-    ACCESS_KEY = credentials['AccessKeyId']
-    SECRET_KEY = credentials['SecretAccessKey']
-    SESSION_TOKEN = credentials['SessionToken']
+
+def format_slack(r):
+    """
+    return a text block for slack to be concatenated
+    """
+    if r['account_name'] == 'Total':
+        text = "Total cost yesterday was {}\n".format(
+            ddf(r['total_costs'][-1])
+        )
+    else:
+        text = "Account {}({}) cost yesterday was {}\n".format(
+            r['account_name'],
+            r['account_id'],
+            ddf(r['total_costs'][-1])
+        )
+
+    text += "```\n"
+    for service_name, costs in r['most_expensive_yesterday']:
+        text += "{:40s} {:7s} {:7s} {:10s}\n".format(service_name,
+                                                     sparkline(costs),
+                                                     ddf(costs[-1]),
+                                                     delta(costs))
+
+    text += "{:40s} {:7s} {:7s} {:10s}\n".format("Other",
+                                                 sparkline(r['other_costs']),
+                                                 ddf(r['other_costs'][-1]),
+                                                 delta(r['other_costs']))
+
+    text += "{:40s} {:7s} {:7s} {:10s}\n".format("Total",
+                                                 sparkline(r['total_costs']),
+                                                 ddf(r['total_costs'][-1]),
+                                                 delta(r['total_costs'])
+                                                 )
+    text += "```\n"
+    return(text)
+
+
+def format_teams_acbody(r):
+    card_body = list()
+
+    label = OrderedDict()
+    label['type'] = 'TextBlock'
+    label['wrap'] = "true"
+
+    if r['account_name'] == 'Total':
+        label['text'] = "Total cost yesterday was {}".format(
+            ddf(r['total_costs'][-1])
+        )
+    else:
+        label['text'] = "Account {}({}) cost yesterday was {}".format(
+            r['account_name'], r['account_id'], ddf(r['total_costs'][-1]))
+    card_body.append(label)
+
+    columns = OrderedDict()
+    columns['service'] = accolumn("Service")
+    columns['last7d'] = accolumn("Last7d")
+    columns['dollaryday'] = accolumn("$Yday")
+    columns['delta'] = accolumn("delta")
+
+    for service_name, costs in r['most_expensive_yesterday']:
+        columns['service']['items'].append(service_name)
+        columns['last7d']['items'].append(sparkline(costs))
+        columns['dollaryday']['items'].append(ddf(costs[-1]))
+        columns['delta']['items'].append(delta(costs))
+
+    columns['service']['items'].append("Other")
+    columns['last7d']['items'].append(sparkline(r['other_costs']))
+    columns['dollaryday']['items'].append(ddf(r['other_costs'][-1]))
+    columns['delta']['items'].append(delta(r['other_costs']))
+
+    columns['service']['items'].append("TOTAL")
+    columns['last7d']['items'].append(sparkline(r['total_costs']))
+    columns['dollaryday']['items'].append(ddf(r['total_costs'][-1]))
+    columns['delta']['items'].append(delta(r['total_costs']))
+
+    # extras
+    # buffer += line_fmt.format(service="Tax (Monthly)", last7d=sparkline(tax), dollaryday=tax[-1], delta=delta(tax))
+
+    columnset = OrderedDict()
+    columnset['type'] = 'ColumnSet'
+    columnset['columns'] = list()
+
+    for col in columns.values():
+        wrap = False
+        column = OrderedDict()
+        column['type'] = 'Column'
+        if col['heading'] == 'Service':
+            column['width'] = '42'
+            wrap = True
+        elif col['heading'] == 'Last7d':
+            column['width'] = '20'
+        elif col['heading'] == '$Yday':
+            column['width'] = '10'
+        elif col['heading'] == 'delta':
+            column['width'] = '13'
+        else:
+            raise('unknown column')
+        if col['heading'] == '$Yday' or col['heading'] == 'delta':
+            column['horizontalContentAlignment'] = "Right"
+        column['items'] = list()
+        column['items'].append(acheader(col['heading']))
+        for value in col['items']:
+            if col['heading'] == '$Yday':
+                column['items'].append(acdata(value))
+            elif col['heading'] == 'delta':
+                column['items'].append(acdata(value))
+            else:
+                column['items'].append(acdata(value, wrap=wrap))
+        columnset['columns'].append(column)
+    card_body.append(columnset)
+    return card_body
+
+
+def acdata(text, wrap=False):
+    return acitem(text, sep=True, wrap=wrap)
+
+
+def acheader(text):
+    return acitem(text, weight="Bolder")
+
+
+def acitem(text, sep=None, weight=None, wrap=False):
+    element = defaultdict()
+    element['type'] = "TextBlock"
+    element['height'] = 'stretch'
+    element['spacing'] = 'Small'
+    if sep:
+        element['separator'] = "true"
+    if weight:
+        element['weight'] = str(weight)
+    if wrap:
+        element['wrap'] = "true"
+    element['text'] = str(text)
+    return element
+
+
+def accolumn(str):
+    col = defaultdict()
+    col['heading'] = str
+    col['items'] = list()
+    return col
+
+
+def cost_report(account) -> dict:
+    """
+    get the cost explorer costs from organizations main account
+    """
+
+    account_list = account['Id'] if isinstance(
+        account['Id'], (list, tuple)) else [account['Id']]
 
     ce = boto3.client('ce',
-                      aws_access_key_id=ACCESS_KEY,
-                      aws_secret_access_key=SECRET_KEY,
-                      aws_session_token=SESSION_TOKEN)
-
+                      aws_access_key_id=account['AccessKeyId'],
+                      aws_secret_access_key=account['SecretAccessKey'],
+                      aws_session_token=account['SessionToken']
+                      )
     query = {
         "TimePeriod": {
             "Start": week_ago.strftime('%Y-%m-%d'),
@@ -74,9 +252,7 @@ def cost_report(account_id, account_name,
             "And": [{
                 "Dimensions": {
                     "Key": "LINKED_ACCOUNT",
-                    "Values":
-                        account_id
-
+                    "Values": account_list
                 },
             }, {
                 "Not": {
@@ -104,8 +280,6 @@ def cost_report(account_id, account_name,
 
     result = ce.get_cost_and_usage(**query)
 
-    buffer = "%-40s %-7s  %7s     ∆%%\n" % ("Service", "Last 7d", "$ Yday")
-
     cost_per_day_by_service = defaultdict(list)
 
     # Build a map of service -> array of daily costs for the time frame
@@ -115,21 +289,18 @@ def cost_report(account_id, account_name,
             cost = float(group['Metrics']['UnblendedCost']['Amount'])
             cost_per_day_by_service[key].append(cost)
 
+    # remove Tax as it is monthly
+    tax = cost_per_day_by_service['Tax']
+    del cost_per_day_by_service['Tax']
+
     # Sort the map by yesterday's cost
     most_expensive_yesterday = sorted(
         cost_per_day_by_service.items(), key=lambda i: i[1][-1], reverse=True)
 
-    for service_name, costs in most_expensive_yesterday[:5]:
-        buffer += "%-40s %s $%7.2f" % (service_name,
-                                       sparkline(costs), costs[-1]) + delta(costs) + "\n"
-
     other_costs = [0.0] * n_days
-    for service_name, costs in most_expensive_yesterday[5:]:
+    for service_name, costs in most_expensive_yesterday[top_n_services:]:
         for i, cost in enumerate(costs):
             other_costs[i] += cost
-
-    buffer += "%-40s %s $%7.2f" % ("Other", sparkline(other_costs),
-                                   other_costs[-1]) + delta(other_costs) + "\n"
 
     total_costs = [0.0] * n_days
     for day_number in range(n_days):
@@ -139,45 +310,16 @@ def cost_report(account_id, account_name,
             except IndexError:
                 total_costs[day_number] += 0.0
 
-    buffer += "%-40s %s $%7.2f" % ("Total", sparkline(total_costs),
-                                   total_costs[-1]) + delta(total_costs) + "\n"
+    r = dict()
+    # clash of variable naming what does pep say
+    r['account_id'] = account['Id']
+    r['account_name'] = account['Name']
+    r['most_expensive_yesterday'] = most_expensive_yesterday[:top_n_services]
+    r['other_costs'] = other_costs
+    r['tax'] = tax
+    r['total_costs'] = total_costs
 
-    credits_expire_date = os.environ.get('CREDITS_EXPIRE_DATE')
-    if credits_expire_date:
-        credits_expire_date = datetime.datetime.strptime(
-            credits_expire_date, "%m/%d/%Y")
-        credits_remaining_as_of = os.environ.get('CREDITS_REMAINING_AS_OF')
-        credits_remaining_as_of = datetime.datetime.strptime(
-            credits_remaining_as_of, "%m/%d/%Y")
-
-        credits_remaining = float(os.environ.get('CREDITS_REMAINING'))
-
-        days_left_on_credits = (credits_expire_date -
-                                credits_remaining_as_of).days
-        allowed_credits_per_day = credits_remaining / days_left_on_credits
-
-        relative_to_budget = (
-            total_costs[-1] / allowed_credits_per_day) * 100.0
-
-        if relative_to_budget < 60:
-            emoji = ":white_check_mark:"
-        elif relative_to_budget > 110:
-            emoji = ":rotating_light:"
-        else:
-            emoji = ":warning:"
-
-        summary = "%s Yesterday's cost for account " + account_name + " of $%5.2f is %.0f%% of credit budget $%5.2f for the day." % (
-            emoji,
-            total_costs[-1],
-            relative_to_budget,
-            allowed_credits_per_day,
-        )
-
-    return total_costs[-1], buffer
-
-
-def code_block(text):
-    return "```\n" + text + "```\n"
+    return r
 
 
 def report_cost(context, event):
@@ -204,21 +346,13 @@ def report_cost(context, event):
 
     response = org.list_accounts(MaxResults=pagesize)
 
-    summary = ""
-    buffer = ""
-    accounts = []
+    reports = []
     while True:
         for account in response['Accounts']:
             if searchterm is None or searchterm in account['Name'].lower():
-                #print('{Id} {Name}'.format(**account))
-                accounts.append(account['Id'])
-                total, this_buffer = cost_report(
-                    account_id=[account['Id']],
-                    account_name=account['Name'],
-                    credentials=acct_b['Credentials'])
-                buffer += 'Account {}({}) cost yesterday was ${:.2f}\n'.format(
-                    account['Name'], account['Id'], total)
-                buffer += code_block(this_buffer)
+                # print('{Id} {Name}'.format(**account))
+                account = {**account, **acct_b['Credentials']}
+                reports.append(cost_report(account))
 
         if 'NextToken' not in response:
             break
@@ -226,25 +360,92 @@ def report_cost(context, event):
         response = org.list_accounts(
             MaxResults=pagesize, NextToken=response['NextToken'])
 
-    total, this_buffer = cost_report(
-        account_id=accounts,
-        account_name="Total",
-        credentials=acct_b['Credentials'])
-    summary = 'Total cost yesterday was ${:.2f}\n'.format(total)
-    buffer += 'Total cost yesterday was ${:.2f}\n'.format(total)
-    buffer += code_block(this_buffer)
+    all_accounts = acct_b['Credentials']
+    all_accounts['Id'] = list(map(lambda r: r['account_id'], reports))
+    all_accounts['Name'] = 'Total'
+    total_report = cost_report(all_accounts)
+    reports.append(total_report)
 
-    hook_url = os.environ.get('SLACK_WEBHOOK_URL')
-    if hook_url:
-        resp = requests.post(
-            hook_url,
-            json={
-                "text": summary + "\n\n\n" + buffer + "\n",
-            }
-        )
+    # summary is used by multiple report types
+    summary = "Total cost yesterday was {}\n".format(
+        ddf(total_report['total_costs'][-1]))
 
-        if resp.status_code != 200:
-            print("HTTP %s: %s" % (resp.status_code, resp.text))
-    else:
-        print(summary)
-        print(buffer)
+    """
+    workout which format to use based on webhook
+    """
+    hook_urls = os.environ.get(
+        'WEBHOOK_URLS') if 'WEBHOOK_URLS' in os.environ else 'https://example.com'
+
+    for hook_url in hook_urls.split('|'):
+
+        hook_type = hook_service(hook_url)
+
+        if hook_type == 'slack':
+            """
+            slack version
+            gather summaries and text, post as message
+            """
+
+            message = ""
+            for report in reports:
+                message += format_slack(report)
+
+            resp = requests.post(
+                hook_url,
+                json={
+                    "text": summary + "\n\n\n" + message + "\n",
+                }
+            )
+            if resp.status_code == requests.codes.ok:
+                print('posted {}'.format(summary))
+            else:
+                print("Warn HTTP %s: %s" % (resp.status_code, resp.text))
+
+        elif hook_type == 'teams':
+            """
+            teams version
+            get a list of text blocks and columnsets and make them the body of a adaptive card
+            make the card an attachment
+            add the attachment to a message
+            such a faff
+            """
+            card = OrderedDict()
+            card['$schema'] = "http://adaptivecards.io/schemas/adaptive-card.json"
+            card['type'] = "AdaptiveCard"
+            card['version'] = "1.0"
+            card['title'] = summary
+            card['body'] = list()
+
+            for report in reports:
+                card['body'].extend(format_teams_acbody(report))
+
+                # card goes in attachement
+            attachment = OrderedDict()
+            attachment['contentType'] = "application/vnd.microsoft.card.adaptive"
+            attachment['contentUrl'] = "null"
+            attachment['content'] = card
+
+            # attachement goes in message
+            message = OrderedDict()
+            message['type'] = 'message'
+            message['attachments'] = list()
+            message['attachments'].append(attachment)
+
+            #print(json.dumps(message, indent=4, sort_keys=False))
+            output = io.StringIO(json.dumps(message, indent=4, sort_keys=False)
+                                 )
+            headers = {"Content-Type": "application/json"}
+            resp = requests.post(
+                'https://outlook.office.com/webhook/876f4e9a-3dc6-4cfa-8b54-23a12eb00908@5567eafd-e777-42a5-91bb-9440fd43b893/IncomingWebhook/90003bcf64fd44969343e6fae92a9d4a/9845b659-eb52-432c-9c8c-1dc2ac21145f',
+                # json=json.dumps(card, indent=4, sort_keys=False),
+                data=output,
+                headers=headers,
+            )
+        else:
+            print('new hook format')
+
+
+if __name__ == "__main__":
+    if 'CA_ROLE' not in os.environ:
+        raise "at the moment we need CA_ROLE set"
+    report_cost(1, 1)
