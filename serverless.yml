@@ -1,4 +1,4 @@
-service: aws-billing-to-slack
+service: aws-billing-to-webhook
 
 plugins:
   - serverless-python-requirements
@@ -24,21 +24,18 @@ functions:
   report_cost:
     handler: handler.report_cost
 
-    description: Send account daily billing data to Slack channel
+    description: Send account daily billing data from organisation to webhooks delimited by |
 
     # Keep costs minimal
     memorySize: 128
-    timeout: 20
+    timeout: 25
 
     events:
       # Every day at 10:00 UTC
       - schedule: cron(0 10 * * ? *)
 
     environment:
-      SLACK_WEBHOOK_URL: ${opt:slack_url}
-      CREDITS_EXPIRE_DATE: ${opt:credits_expire_date}
-      CREDITS_REMAINING_AS_OF: ${opt:credits_remaining_date}
-      CREDITS_REMAINING: ${opt:credits_remaining}
+      WEBHOOK_URLS: ${opt:webhook_urls}
       CA_ACCOUNT: ${opt:ca_account}
       CA_ROLE: ${opt:ca_role}
       ACCOUNT_NAME_SEARCH_TERM: ${opt:account_name_search_term}
