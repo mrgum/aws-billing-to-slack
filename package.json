@@ -1,5 +1,5 @@
 {
-  "name": "aws-billing-to-slack",
+  "name": "aws-billing-to-webhook",
   "description": "",
   "version": "0.1.0",
   "dependencies": {},
