@@ -39,3 +39,4 @@ functions:
       CA_ACCOUNT: ${opt:ca_account}
       CA_ROLE: ${opt:ca_role}
       ACCOUNT_NAME_SEARCH_TERM: ${opt:account_name_search_term}
+      ACCOUNT_IDS: ${opt:account_ids}

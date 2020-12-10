@@ -15,6 +15,9 @@ role = os.environ.get('CA_ROLE')
 searchterm = None
 if 'ACCOUNT_NAME_SEARCH_TERM' in os.environ:
     searchterm = os.environ.get('ACCOUNT_NAME_SEARCH_TERM')
+accountlist = None
+if 'ACCOUNT_IDS' in os.environ:
+    accountlist = os.environ.get('ACCOUNT_IDS')
 
 pagesize = 5
 
@@ -41,6 +44,7 @@ def hook_service(hook_url) -> str:
         return "teams"
     else:
         return "text"
+
 
     # Leaving out the full block because Slack doesn't like it: '█'
 sparks = ['▁', '▂', '▃', '▄', '▅', '▆', '▇']
@@ -229,6 +233,19 @@ def accolumn(str):
     return col
 
 
+def include_account(account):
+    if accountlist is not None:
+        for account_id in accountlist.split('|'):
+            if account_id == account('Id'):
+                return True
+    if searchterm is None:
+        return True
+    for term in searchterm.split('|'):
+        if term in account['Name'] or term in account['Name'].lower():
+            return True
+    return False
+
+
 def cost_report(account) -> dict:
     """
     get the cost explorer costs from organizations main account
@@ -349,8 +366,8 @@ def report_cost(context, event):
     reports = []
     while True:
         for account in response['Accounts']:
-            if searchterm is None or searchterm in account['Name'].lower():
-                # print('{Id} {Name}'.format(**account))
+            if include_account(account):
+                #print('{Id} {Name}'.format(**account))
                 account = {**account, **acct_b['Credentials']}
                 reports.append(cost_report(account))
 

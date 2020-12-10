@@ -4,7 +4,9 @@
 
 Sends daily breakdowns of AWS costs to a Slack channel.
 
-This version is written to run under Organizations and requires a role in the master/root account
+This version is written to run under Organizations and requires a role in the master/root account.
+
+As the sharing of credits is more complicated in organisations, that feature has been removed for now.
 
 # Install
 
@@ -39,7 +41,7 @@ If you have AWS credits on your account and want to see them taken into account 
 
     ```
     serverless deploy \
-        --slack_url="https://hooks.slack.com/services/xxx/yyy/zzzz" \
+        --hook_urls="https://hooks.slack.com/services/xxx/yyy/zzzz|/outlook.office.com/webhook/uuid@uuid/IncomingWebhook/integer/uuid" \
         --credits_expire_date="mm/dd/yyyy" \
         --credits_remaining_date="mm/dd/yyyy" \
         --credits_remaining="xxx.xx"
