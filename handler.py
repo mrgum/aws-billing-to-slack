@@ -19,8 +19,9 @@ accountlist = None
 if 'ACCOUNT_IDS' in os.environ:
     accountlist = os.environ.get('ACCOUNT_IDS')
 
-pagesize = 5
 
+icon = 'https://icons.iconarchive.com/icons/custom-icon-design/flatastic-11/256/Cash-icon.png'
+pagesize = 5
 n_days = 7
 top_n_services = 6
 today = datetime.datetime.today()
@@ -44,7 +45,6 @@ def hook_service(hook_url) -> str:
         return "teams"
     else:
         return "text"
-
 
     # Leaving out the full block because Slack doesn't like it: '█'
 sparks = ['▁', '▂', '▃', '▄', '▅', '▆', '▇']
@@ -91,6 +91,19 @@ def ddf(cost):
     return '${:.2f}'.format(cost)
 
 
+def report_summary_text(r):
+    if r['account_name'] == 'Total':
+        return("Total cost yesterday was {}\n".format(
+            ddf(r['total_costs'][-1]))
+        )
+    else:
+        return("Account {}({}) cost yesterday was {}\n".format(
+            r['account_name'],
+            r['account_id'],
+            ddf(r['total_costs'][-1])
+        ))
+
+
 def format_slack(r):
     """
     return a text block for slack to be concatenated
@@ -125,6 +138,37 @@ def format_slack(r):
                                                  )
     text += "```\n"
     return(text)
+
+
+def ftm_fact_value(c):
+    return "{:7s} {:7s} {:10s}".format(
+        sparkline(c),
+        ddf(c[-1]),
+        delta(c)
+    )
+
+
+def format_teams_mcsection(r):
+
+    summary = report_summary_text(r)
+    section = dict()
+    section['markdown'] = 'true'
+    section['activityTitle'] = f"![]({icon}){summary}"
+    section['activitySubtitle'] = 'subtitle to follow'
+
+    facts = list()
+    fact = dict()
+
+    for service_name, costs in r['most_expensive_yesterday']:
+        facts.append({'name': service_name, 'value': ftm_fact_value(costs)})
+
+    facts.append({'name': "Other", 'value': ftm_fact_value(r['other_costs'])})
+
+    facts.append({'name': "Total", 'value': ftm_fact_value(r['total_costs'])})
+
+    section['facts'] = facts
+
+    return section
 
 
 def format_teams_acbody(r):
@@ -367,7 +411,7 @@ def report_cost(context, event):
     while True:
         for account in response['Accounts']:
             if include_account(account):
-                #print('{Id} {Name}'.format(**account))
+                # print('{Id} {Name}'.format(**account))
                 account = {**account, **acct_b['Credentials']}
                 reports.append(cost_report(account))
 
@@ -427,39 +471,26 @@ def report_cost(context, event):
             such a faff
             """
             card = OrderedDict()
-            card['$schema'] = "http://adaptivecards.io/schemas/adaptive-card.json"
-            card['type'] = "AdaptiveCard"
-            card['version'] = "1.0"
-            card['title'] = summary
-            card['body'] = list()
+            card['@type'] = "MessageCard"
+            card['@context'] = "http://schema.org/extensions"
+            card['themeColor'] = "0076D7"
+            card['summary'] = summary
+            card['sections'] = list()
 
             for report in reports:
-                card['body'].extend(format_teams_acbody(report))
+                card['sections'].append(format_teams_mcsection(report))
 
-                # card goes in attachement
-            attachment = OrderedDict()
-            attachment['contentType'] = "application/vnd.microsoft.card.adaptive"
-            attachment['contentUrl'] = "null"
-            attachment['content'] = card
-
-            # attachement goes in message
-            message = OrderedDict()
-            message['type'] = 'message'
-            message['attachments'] = list()
-            message['attachments'].append(attachment)
-
-            #print(json.dumps(message, indent=4, sort_keys=False))
-            output = io.StringIO(json.dumps(message, indent=4, sort_keys=False)
-                                 )
+            output = io.StringIO(json.dumps(card, indent=4, sort_keys=False))
             headers = {"Content-Type": "application/json"}
-            resp = requests.post(
-                'https://outlook.office.com/webhook/876f4e9a-3dc6-4cfa-8b54-23a12eb00908@5567eafd-e777-42a5-91bb-9440fd43b893/IncomingWebhook/90003bcf64fd44969343e6fae92a9d4a/9845b659-eb52-432c-9c8c-1dc2ac21145f',
-                # json=json.dumps(card, indent=4, sort_keys=False),
-                data=output,
-                headers=headers,
-            )
+            # resp = requests.post(
+            #     'https://outlook.office.com/webhook/876f4e9a-3dc6-4cfa-8b54-23a12eb00908@5567eafd-e777-42a5-91bb-9440fd43b893/IncomingWebhook/90003bcf64fd44969343e6fae92a9d4a/9845b659-eb52-432c-9c8c-1dc2ac21145f',
+            #     data=output,
+            #     headers=headers,
+            # )
+            print(json.dumps(card, indent=4, sort_keys=False))
         else:
             print('new hook format')
+            print(summary)
 
 
 if __name__ == "__main__":
