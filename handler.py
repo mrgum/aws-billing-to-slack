@@ -20,7 +20,6 @@ if 'ACCOUNT_IDS' in os.environ:
     accountlist = os.environ.get('ACCOUNT_IDS')
 
 
-icon = 'https://icons.iconarchive.com/icons/custom-icon-design/flatastic-11/256/Cash-icon.png'
 pagesize = 5
 n_days = 7
 top_n_services = 6
@@ -45,6 +44,7 @@ def hook_service(hook_url) -> str:
         return "teams"
     else:
         return "text"
+
 
     # Leaving out the full block because Slack doesn't like it: '█'
 sparks = ['▁', '▂', '▃', '▄', '▅', '▆', '▇']
@@ -93,11 +93,11 @@ def ddf(cost):
 
 def report_summary_text(r):
     if r['account_name'] == 'Total':
-        return("Total cost yesterday was {}\n".format(
+        return("Total cost yesterday was {}".format(
             ddf(r['total_costs'][-1]))
         )
     else:
-        return("Account {}({}) cost yesterday was {}\n".format(
+        return("Account {}({}) cost yesterday was {}".format(
             r['account_name'],
             r['account_id'],
             ddf(r['total_costs'][-1])
@@ -153,11 +153,10 @@ def format_teams_mcsection(r):
     summary = report_summary_text(r)
     section = dict()
     section['markdown'] = 'true'
-    section['activityTitle'] = f"![]({icon}){summary}"
+    section['activityTitle'] = summary
     section['activitySubtitle'] = 'subtitle to follow'
 
     facts = list()
-    fact = dict()
 
     for service_name, costs in r['most_expensive_yesterday']:
         facts.append({'name': service_name, 'value': ftm_fact_value(costs)})
@@ -470,24 +469,25 @@ def report_cost(context, event):
             add the attachment to a message
             such a faff
             """
-            card = OrderedDict()
-            card['@type'] = "MessageCard"
-            card['@context'] = "http://schema.org/extensions"
-            card['themeColor'] = "0076D7"
-            card['summary'] = summary
-            card['sections'] = list()
 
             for report in reports:
+                card = OrderedDict()
+                card['@type'] = "MessageCard"
+                card['@context'] = "http://schema.org/extensions"
+                card['themeColor'] = "0076D7"
+                card['summary'] = summary
+                card['sections'] = list()
                 card['sections'].append(format_teams_mcsection(report))
 
-            output = io.StringIO(json.dumps(card, indent=4, sort_keys=False))
-            headers = {"Content-Type": "application/json"}
-            # resp = requests.post(
-            #     'https://outlook.office.com/webhook/876f4e9a-3dc6-4cfa-8b54-23a12eb00908@5567eafd-e777-42a5-91bb-9440fd43b893/IncomingWebhook/90003bcf64fd44969343e6fae92a9d4a/9845b659-eb52-432c-9c8c-1dc2ac21145f',
-            #     data=output,
-            #     headers=headers,
-            # )
-            print(json.dumps(card, indent=4, sort_keys=False))
+                # needs to be less than 25k
+                output = io.StringIO(json.dumps(card, sort_keys=False))
+                headers = {"Content-Type": "application/json"}
+                resp = requests.post(
+                    hook_url,
+                    data=output,
+                    headers=headers,
+                )
+                #print(json.dumps(card, sort_keys=False))
         else:
             print('new hook format')
             print(summary)
